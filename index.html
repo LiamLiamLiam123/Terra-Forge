@@ -1,0 +1,691 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>TERRA FORGE</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:#000; overflow:hidden; font-family:'Courier New',monospace; }
+  canvas { display:block; }
+
+  #hud {
+    position:fixed; top:0; left:0; right:0; pointer-events:none; z-index:10;
+    display:flex; justify-content:space-between; padding:14px 18px; gap:12px;
+  }
+  .panel {
+    background:rgba(0,0,0,0.75); border:1px solid rgba(255,255,255,0.13);
+    padding:10px 14px; color:#ddd; font-size:11px; letter-spacing:.07em;
+  }
+  .panel h3 { font-size:9px; color:#666; text-transform:uppercase; margin-bottom:5px; }
+
+  #lives-row { display:flex; gap:5px; margin-top:4px; }
+  .heart { font-size:14px; }
+  .heart.dead { opacity:0.2; }
+
+  #crosshair {
+    position:fixed; top:50%; left:50%; transform:translate(-50%,-50%);
+    width:18px; height:18px; pointer-events:none; z-index:10;
+  }
+  #crosshair::before,#crosshair::after {
+    content:''; position:absolute; background:rgba(255,255,255,.75);
+  }
+  #crosshair::before { width:1px; height:100%; left:50%; transform:translateX(-50%); }
+  #crosshair::after  { height:1px; width:100%; top:50%; transform:translateY(-50%); }
+
+  #msg {
+    position:fixed; bottom:28px; left:50%; transform:translateX(-50%);
+    background:rgba(0,0,0,.8); color:#aaa; padding:8px 20px;
+    font-size:11px; letter-spacing:.1em; pointer-events:none; z-index:10;
+    border:1px solid rgba(255,255,255,.1);
+  }
+
+  #overlay {
+    position:fixed; inset:0; background:rgba(0,0,0,.88);
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    z-index:20; color:#eee; font-family:'Courier New',monospace;
+  }
+  #overlay h1 { font-size:38px; letter-spacing:.25em; margin-bottom:8px; color:#fff; }
+  #overlay .sub { font-size:12px; color:#888; letter-spacing:.15em; margin-bottom:30px; }
+  #overlay .info { font-size:12px; color:#bbb; line-height:2.1; text-align:center; max-width:440px; }
+  #overlay .btn {
+    margin-top:28px; padding:10px 30px; border:1px solid #fff;
+    background:transparent; color:#fff; font-family:'Courier New',monospace;
+    font-size:13px; letter-spacing:.15em; cursor:pointer; pointer-events:all;
+  }
+  #overlay .btn:hover { background:rgba(255,255,255,.1); }
+
+  #level-banner {
+    position:fixed; top:50%; left:50%; transform:translate(-50%,-50%);
+    font-size:34px; color:#fff; letter-spacing:.3em; pointer-events:none;
+    z-index:15; opacity:0; transition:opacity .4s; text-align:center;
+  }
+  #level-banner small { display:block; font-size:13px; color:#aaa; letter-spacing:.2em; margin-top:6px; }
+
+  #ammo-row { display:flex; gap:3px; margin-top:4px; flex-wrap:wrap; max-width:200px; }
+  .pip { width:7px; height:7px; background:#333; border-radius:1px; }
+  .pip.on { background:#7fff7f; }
+  #bullet-info { margin-top:4px; color:#ffcc66; font-size:11px; }
+
+  #hit-flash {
+    position:fixed; inset:0; background:rgba(255,0,0,0);
+    pointer-events:none; z-index:12; transition:background .1s;
+  }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div id="hud">
+  <div class="panel">
+    <h3>Terra Forge</h3>
+    <div id="level-txt">LEVEL 1 / 10</div>
+    <div id="task-txt" style="color:#ffcc66;margin-top:3px;font-size:10px;"></div>
+    <div id="enemy-txt" style="color:#ff6666;font-size:10px;margin-top:2px;"></div>
+  </div>
+  <div class="panel" style="text-align:center">
+    <h3>Ammo · <span id="bullet-info">—</span></h3>
+    <div id="ammo-row"></div>
+    <div id="reload-txt" style="color:#ff6644;font-size:10px;margin-top:3px;display:none">RELOADING...</div>
+  </div>
+  <div class="panel">
+    <h3>Lives</h3>
+    <div id="lives-row"></div>
+    <div style="margin-top:6px;font-size:10px;color:#888">Kills: <span id="kill-count">0</span></div>
+  </div>
+</div>
+
+<div id="crosshair"></div>
+<div id="msg">CLICK TO LOCK MOUSE · WASD MOVE · SPACE JUMP · CLICK SHOOT</div>
+<div id="hit-flash"></div>
+<div id="level-banner"><span id="lb-text"></span><small id="lb-sub"></small></div>
+
+<div id="overlay">
+  <h1>TERRA FORGE</h1>
+  <div class="sub">BULLET TERRAIN SHOOTER</div>
+  <div class="info">
+    Shoot walls — bullets <strong>become terrain</strong>.<br>
+    Build enough voxels to advance each level.<br>
+    <strong>Crawlers</strong> walk on terrain you build. <strong>Drones</strong> fly and chase you.<br>
+    Shoot enemies to kill them. You have <strong>3 lives</strong>.<br><br>
+    <strong>WASD</strong> move &nbsp;·&nbsp; <strong>Space</strong> jump &nbsp;·&nbsp; <strong>Click</strong> shoot &nbsp;·&nbsp; <strong>R</strong> reload<br>
+    <strong>Shift</strong> sprint
+  </div>
+  <button class="btn" id="start-btn">START GAME</button>
+</div>
+
+<script>
+// ─────────────────────────────────────────────────────────
+const canvas = document.getElementById('c');
+const ctx    = canvas.getContext('2d');
+function resize(){ canvas.width=innerWidth; canvas.height=innerHeight; }
+resize(); addEventListener('resize', resize);
+const W=()=>canvas.width, H=()=>canvas.height;
+const FOV = 750;
+
+// ── Bullet types pool ─────────────────────────────────────
+const ALL_TYPES = [
+  { id:0, name:'DIRT',    emoji:'🟫', color:'#8B5E3C', light:'#c8a06a', trail:'#c87941', radius:1, speed:18, grav:.08, maxAmmo:15, scale:1.0 },
+  { id:1, name:'ROCK',    emoji:'⬜', color:'#888',    light:'#ccc',    trail:'#aaa',    radius:2, speed:16, grav:.07, maxAmmo:8,  scale:1.5 },
+  { id:2, name:'LAVA',    emoji:'🟠', color:'#ff4400', light:'#ff9944', trail:'#ff6600', radius:1, speed:14, grav:.12, maxAmmo:12, scale:0.9 },
+  { id:3, name:'ICE',     emoji:'🔵', color:'#88ccff', light:'#cceeff', trail:'#aaddff', radius:1, speed:26, grav:.03, maxAmmo:20, scale:0.8 },
+  { id:4, name:'GOLD',    emoji:'🟡', color:'#FFD700', light:'#ffe866', trail:'#ffc400', radius:2, speed:11, grav:.16, maxAmmo:6,  scale:2.0 },
+  { id:5, name:'VOID',    emoji:'🟣', color:'#8800ff', light:'#cc66ff', trail:'#aa00ff', radius:3, speed:9,  grav:.02, maxAmmo:3,  scale:3.0 },
+  { id:6, name:'SAND',    emoji:'🟤', color:'#d4a84b', light:'#f0c96a', trail:'#c8993a', radius:1, speed:13, grav:.15, maxAmmo:18, scale:0.7 },
+  { id:7, name:'CRYSTAL', emoji:'💎', color:'#00ffee', light:'#aaffee', trail:'#00ddcc', radius:1, speed:22, grav:.05, maxAmmo:10, scale:1.2 },
+  { id:8, name:'EMBER',   emoji:'🔴', color:'#ff2200', light:'#ff8866', trail:'#ff4400', radius:1, speed:17, grav:.09, maxAmmo:14, scale:1.0 },
+  { id:9, name:'MOSS',    emoji:'🟢', color:'#3a7a2a', light:'#6acc4a', trail:'#4a9a3a', radius:2, speed:12, grav:.06, maxAmmo:10, scale:1.3 },
+];
+
+// ── Levels ─────────────────────────────────────────────────
+const LEVELS = [
+  { name:'THE SHAFT',     desc:'First contact',         w:20, h:30, d:20, target:60,  enemies:3,  fogColor:'#060612' },
+  { name:'THE CORRIDOR',  desc:'Long narrow tunnel',    w:8,  h:20, d:50, target:100, enemies:4,  fogColor:'#120606' },
+  { name:'THE CHAMBER',   desc:'Vast open cube',        w:36, h:36, d:36, target:180, enemies:6,  fogColor:'#061206' },
+  { name:'THE PIT',       desc:'Deep void below',       w:20, h:60, d:20, target:140, enemies:5,  fogColor:'#080010' },
+  { name:'THE MAZE',      desc:'Wide winding space',    w:48, h:20, d:48, target:220, enemies:8,  fogColor:'#100a00' },
+  { name:'THE NEEDLE',    desc:'Tall thin spire',       w:8,  h:70, d:8,  target:90,  enemies:6,  fogColor:'#001020' },
+  { name:'THE ARENA',     desc:'Open battle ground',    w:56, h:28, d:56, target:280, enemies:10, fogColor:'#180600' },
+  { name:'THE LABYRINTH', desc:'Deep and wide',         w:56, h:56, d:56, target:360, enemies:12, fogColor:'#00060f' },
+  { name:'THE VAULT',     desc:'Reinforced chamber',    w:28, h:28, d:28, target:160, enemies:10, fogColor:'#0a0a0a' },
+  { name:'THE ABYSS',     desc:'Final stand',           w:70, h:70, d:70, target:450, enemies:15, fogColor:'#050005' },
+];
+
+// ── State ──────────────────────────────────────────────────
+let currentLevel = 0;
+let levelType    = null;
+let ammo         = 0;
+let reloading    = false;
+let totalVoxels  = 0;
+let levelVoxels  = 0;
+let lives        = 3;
+let kills        = 0;
+let gameStarted  = false;
+let invincible   = false; // brief invincibility after hit
+let advancing    = false;
+
+const cam = { x:0, y:0, z:-5, yaw:0, pitch:0, vy:0, onGround:false };
+const GRAVITY   = 0.005;
+const JUMP_V    = -0.18;
+const MOVE_SPD  = 0.13;
+const keys      = {};
+
+const voxels    = new Map();
+const bullets   = [];
+const particles = [];
+const enemies   = [];
+
+// ── Helpers ────────────────────────────────────────────────
+function vKey(x,y,z){ return `${Math.round(x)},${Math.round(y)},${Math.round(z)}`; }
+function hasV(x,y,z){ return voxels.has(vKey(x,y,z)); }
+function dist3(a,b){ const dx=a.x-b.x,dy=a.y-b.y,dz=a.z-b.z; return Math.sqrt(dx*dx+dy*dy+dz*dz); }
+
+function parseHex(hex){
+  const n=parseInt(hex.replace('#',''),16);
+  return [(n>>16)&255,(n>>8)&255,n&255];
+}
+function makeColor(t){
+  const v=Math.floor(Math.random()*40)-20;
+  try{
+    const [r,g,b]=parseHex(t.color);
+    return `rgb(${Math.max(0,Math.min(255,r+v))},${Math.max(0,Math.min(255,g+v))},${Math.max(0,Math.min(255,b+v))})`;
+  }catch(e){ return t.color; }
+}
+
+// ── Level build ────────────────────────────────────────────
+function buildLevel(idx){
+  voxels.clear(); bullets.length=0; particles.length=0; enemies.length=0;
+  levelVoxels=0; advancing=false;
+
+  const L=LEVELS[idx];
+  const hw=Math.floor(L.w/2), hd=Math.floor(L.d/2);
+
+  const wallC=(x,y,z)=>{
+    const s=55+Math.floor(Math.abs(Math.sin(x*.6+y*.3+z*.5))*35);
+    return `rgb(${s+8},${s},${s+4})`;
+  };
+
+  // 4 walls, no floor, no ceiling
+  for(let y=-L.h; y<=2; y++){
+    for(let z=-hd; z<=hd; z++){
+      voxels.set(vKey(-hw,y,z), wallC(-hw,y,z));
+      voxels.set(vKey( hw,y,z), wallC( hw,y,z));
+    }
+    for(let x=-hw; x<=hw; x++){
+      voxels.set(vKey(x,y,-hd), wallC(x,y,-hd));
+      voxels.set(vKey(x,y, hd), wallC(x,y, hd));
+    }
+  }
+
+  // Small starter platform so player doesn't immediately fall
+  for(let x=-2;x<=2;x++) for(let z=-2;z<=2;z++) voxels.set(vKey(x,1,z),'#444');
+
+  // Spawn player
+  cam.x=0; cam.y=-1; cam.z=0; cam.yaw=0; cam.pitch=0; cam.vy=0; cam.onGround=false;
+
+  // Random bullet type
+  levelType = ALL_TYPES[Math.floor(Math.random()*ALL_TYPES.length)];
+  ammo = levelType.maxAmmo;
+  reloading = false;
+
+  // Spawn enemies
+  const count = L.enemies;
+  for(let i=0;i<count;i++){
+    const drone = (i % 2 === 0); // alternating crawlers and drones
+    const angle = (i/count)*Math.PI*2;
+    const r = Math.min(hw,hd)*0.55;
+    enemies.push({
+      x: Math.cos(angle)*r,
+      y: drone ? -4 : -1,
+      z: Math.sin(angle)*r,
+      vx:0, vy:0, vz:0,
+      hp:2, maxHp:2,
+      type: drone ? 'drone' : 'crawler',
+      hitTimer:0,
+      attackTimer:0,
+    });
+  }
+
+  updateHUD();
+  showBanner(L.name, L.desc);
+}
+
+// ── HUD ────────────────────────────────────────────────────
+function updateHUD(){
+  const L=LEVELS[currentLevel];
+  document.getElementById('level-txt').textContent = `LEVEL ${currentLevel+1} / ${LEVELS.length}`;
+  document.getElementById('task-txt').textContent  = `${levelVoxels} / ${L.target} voxels`;
+  document.getElementById('bullet-info').textContent = levelType ? `${levelType.emoji} ${levelType.name}` : '—';
+  document.getElementById('reload-txt').style.display = reloading ? 'block':'none';
+  document.getElementById('kill-count').textContent = kills;
+  const alive = enemies.filter(e=>e.hp>0).length;
+  document.getElementById('enemy-txt').textContent = `Enemies: ${alive}`;
+
+  const bar=document.getElementById('ammo-row');
+  bar.innerHTML='';
+  if(levelType){ for(let i=0;i<levelType.maxAmmo;i++){
+    const p=document.createElement('div');
+    p.className='pip'+(i<ammo?' on':'');
+    bar.appendChild(p);
+  }}
+
+  const lr=document.getElementById('lives-row');
+  lr.innerHTML='';
+  for(let i=0;i<3;i++){
+    const h=document.createElement('span');
+    h.className='heart'+(i>=lives?' dead':'');
+    h.textContent='❤';
+    lr.appendChild(h);
+  }
+}
+
+let bannerTimer=null;
+function showBanner(title,sub){
+  const el=document.getElementById('level-banner');
+  document.getElementById('lb-text').textContent=title;
+  document.getElementById('lb-sub').textContent=sub;
+  el.style.opacity='1';
+  if(bannerTimer) clearTimeout(bannerTimer);
+  bannerTimer=setTimeout(()=>{ el.style.opacity='0'; },2600);
+}
+
+// ── Input ──────────────────────────────────────────────────
+let locked=false;
+canvas.addEventListener('click',()=>{ if(gameStarted) canvas.requestPointerLock(); });
+document.addEventListener('pointerlockchange',()=>{
+  locked=document.pointerLockElement===canvas;
+  document.getElementById('msg').style.display=locked?'none':'block';
+});
+document.addEventListener('mousemove',e=>{
+  if(!locked) return;
+  cam.yaw   -= e.movementX*0.0022;
+  cam.pitch  = Math.max(-1.3,Math.min(1.3,cam.pitch+e.movementY*0.0022));
+});
+document.addEventListener('mousedown',e=>{ if(locked&&e.button===0) shoot(); });
+document.addEventListener('keydown',e=>{ keys[e.code]=true; if(e.code==='KeyR') startReload(); e.preventDefault(); });
+document.addEventListener('keyup',  e=>{ keys[e.code]=false; });
+
+// ── Camera movement ────────────────────────────────────────
+function updateCam(){
+  const spd = (keys['ShiftLeft']||keys['ShiftRight']) ? MOVE_SPD*1.8 : MOVE_SPD;
+  const sinY=Math.sin(cam.yaw), cosY=Math.cos(cam.yaw);
+  let mx=0,mz=0;
+  if(keys['KeyW']||keys['ArrowUp'])    { mx-=sinY; mz+=cosY; }
+  if(keys['KeyS']||keys['ArrowDown'])  { mx+=sinY; mz-=cosY; }
+  if(keys['KeyA']||keys['ArrowLeft'])  { mx-=cosY; mz-=sinY; }
+  if(keys['KeyD']||keys['ArrowRight']) { mx+=cosY; mz+=sinY; }
+  const len=Math.sqrt(mx*mx+mz*mz);
+  if(len>0){ mx/=len; mz/=len; }
+
+  const nx=cam.x+mx*spd, nz=cam.z+mz*spd;
+  if(!checkCol(nx,cam.y,cam.z)) cam.x=nx;
+  if(!checkCol(cam.x,cam.y,nz)) cam.z=nz;
+
+  cam.vy+=GRAVITY;
+  cam.y +=cam.vy;
+
+  // Ground check
+  cam.onGround=false;
+  const gy=Math.round(cam.y+1);
+  if(hasV(cam.x,gy,cam.z)||hasV(cam.x,gy+1,cam.z)){
+    cam.y=gy-1; cam.vy=0; cam.onGround=true;
+  }
+  if(cam.onGround && (keys['Space']||keys['KeyZ'])) cam.vy=JUMP_V;
+
+  // Clamp inside level
+  const L=LEVELS[currentLevel];
+  cam.x=Math.max(-L.w/2+0.7,Math.min(L.w/2-0.7,cam.x));
+  cam.z=Math.max(-L.d/2+0.7,Math.min(L.d/2-0.7,cam.z));
+}
+
+function checkCol(x,y,z){
+  for(let dy=0;dy<=1;dy++) if(hasV(Math.round(x),Math.round(y+dy),Math.round(z))) return true;
+  return false;
+}
+
+// ── Shooting ───────────────────────────────────────────────
+function shoot(){
+  if(!gameStarted||reloading||!levelType) return;
+  if(ammo<=0){ startReload(); return; }
+  ammo--;
+  const cp=Math.cos(cam.pitch),sp=Math.sin(cam.pitch);
+  const sinY=Math.sin(cam.yaw),cosY=Math.cos(cam.yaw);
+  const t=levelType;
+  bullets.push({
+    x:cam.x, y:cam.y-0.2, z:cam.z,
+    vx:-cp*sinY*t.speed, vy:-sp*t.speed, vz:cp*cosY*t.speed,
+    type:t, life:280, fromPlayer:true
+  });
+  updateHUD();
+  if(ammo===0) startReload();
+}
+function startReload(){
+  if(reloading||!levelType) return;
+  reloading=true; updateHUD();
+  setTimeout(()=>{ ammo=levelType.maxAmmo; reloading=false; updateHUD(); },2000);
+}
+
+// ── Bullet update ──────────────────────────────────────────
+function updateBullets(){
+  for(let i=bullets.length-1;i>=0;i--){
+    const b=bullets[i];
+    const t=b.type;
+    particles.push({ x:b.x,y:b.y,z:b.z, vx:(Math.random()-.5)*.15, vy:Math.random()*.08, vz:(Math.random()-.5)*.15, life:9, color:t.trail, r:.1 });
+
+    b.vy += t.grav*0.04;
+    b.x  += b.vx*0.045;
+    b.y  += b.vy*0.045;
+    b.z  += b.vz*0.045;
+    b.life--;
+
+    // Enemy hit check (player bullets only)
+    if(b.fromPlayer){
+      for(let e of enemies){
+        if(e.hp<=0) continue;
+        if(dist3(b,e)<1.2){
+          e.hp--;
+          e.hitTimer=12;
+          spawnBlood(e.x,e.y,e.z);
+          if(e.hp<=0){ kills++; spawnBlood(e.x,e.y,e.z,true); }
+          bullets.splice(i,1);
+          updateHUD();
+          goto_next:
+          break;
+        }
+      }
+      if(i>=bullets.length) continue;
+    }
+
+    const gx=Math.round(b.x),gy=Math.round(b.y),gz=Math.round(b.z);
+    if(voxels.has(vKey(gx,gy,gz))||b.life<=0){
+      if(b.fromPlayer){
+        const color=makeColor(t);
+        const r=Math.max(1,Math.round(t.radius*t.scale));
+        for(let dx=-r;dx<=r;dx++) for(let dy=-r;dy<=r;dy++) for(let dz=-r;dz<=r;dz++){
+          if(dx*dx+dy*dy+dz*dz<=r*r+0.5){
+            const k=vKey(gx+dx,gy+dy,gz+dz);
+            if(!voxels.has(k)){ totalVoxels++; levelVoxels++; }
+            voxels.set(k,color);
+          }
+        }
+        for(let p=0;p<14;p++) particles.push({
+          x:b.x,y:b.y,z:b.z,
+          vx:(Math.random()-.5)*1.8,vy:-Math.random()*1.8,vz:(Math.random()-.5)*1.8,
+          life:18+Math.random()*12,color:t.light,r:.28
+        });
+        updateHUD();
+        checkAdvance();
+      }
+      bullets.splice(i,1);
+    }
+  }
+}
+
+function spawnBlood(x,y,z,big=false){
+  const n=big?20:8;
+  for(let p=0;p<n;p++) particles.push({
+    x,y,z, vx:(Math.random()-.5)*2,vy:-Math.random()*2.5,vz:(Math.random()-.5)*2,
+    life:18+Math.random()*20, color:big?'#ff4400':'#ff2200', r:.22
+  });
+}
+
+// ── Enemy update ───────────────────────────────────────────
+function updateEnemies(){
+  const L=LEVELS[currentLevel];
+  for(const e of enemies){
+    if(e.hp<=0) continue;
+    if(e.hitTimer>0) e.hitTimer--;
+    if(e.attackTimer>0) e.attackTimer--;
+
+    const dx=cam.x-e.x, dy=cam.y-e.y, dz=cam.z-e.z;
+    const dist=Math.sqrt(dx*dx+dy*dy+dz*dz);
+    const nx=dx/dist, ny=dy/dist, nz=dz/dist;
+
+    if(e.type==='drone'){
+      // Fly directly toward player, hovering offset
+      const targetY=cam.y-1.5;
+      e.vx+=(nx*.05);
+      e.vy+=((targetY-e.y)*.04);
+      e.vz+=(nz*.05);
+      // Drag
+      e.vx*=.88; e.vy*=.88; e.vz*=.88;
+    } else {
+      // Crawler: move on XZ plane, gravity
+      e.vx+=nx*.04;
+      e.vz+=nz*.04;
+      e.vx*=.82; e.vz*=.82;
+      e.vy+=GRAVITY;
+      // Ground land
+      const gy=Math.round(e.y+0.9);
+      if(hasV(e.x,gy,e.z)){ e.y=gy-0.9; e.vy=0; }
+    }
+
+    e.x+=e.vx; e.y+=e.vy; e.z+=e.vz;
+    // Clamp inside level
+    e.x=Math.max(-L.w/2+1,Math.min(L.w/2-1,e.x));
+    e.z=Math.max(-L.d/2+1,Math.min(L.d/2-1,e.z));
+
+    // Attack player
+    if(dist<1.4 && e.attackTimer<=0 && !invincible){
+      e.attackTimer=60;
+      hitPlayer();
+    }
+  }
+}
+
+function hitPlayer(){
+  if(invincible) return;
+  lives--;
+  invincible=true;
+  flashRed();
+  updateHUD();
+  setTimeout(()=>{ invincible=false; },1800);
+
+  if(lives<=0){
+    gameOver();
+  }
+}
+
+function flashRed(){
+  const f=document.getElementById('hit-flash');
+  f.style.background='rgba(255,0,0,0.45)';
+  setTimeout(()=>{ f.style.background='rgba(255,0,0,0)'; },200);
+}
+
+function gameOver(){
+  gameStarted=false;
+  const ov=document.getElementById('overlay');
+  ov.querySelector('h1').textContent='GAME OVER';
+  ov.querySelector('.sub').textContent='YOU DIED';
+  ov.querySelector('.info').innerHTML=`Reached level ${currentLevel+1} · Kills: ${kills}`;
+  ov.querySelector('.btn').textContent='TRY AGAIN';
+  ov.style.display='flex';
+  if(document.pointerLockElement) document.exitPointerLock();
+}
+
+function checkAdvance(){
+  if(advancing) return;
+  const L=LEVELS[currentLevel];
+  if(levelVoxels>=L.target){
+    advancing=true;
+    setTimeout(()=>{
+      if(currentLevel<LEVELS.length-1){
+        currentLevel++;
+        levelVoxels=0;
+        buildLevel(currentLevel);
+      } else {
+        showBanner('VICTORY','All 10 levels conquered!');
+        gameStarted=false;
+        setTimeout(()=>{
+          const ov=document.getElementById('overlay');
+          ov.querySelector('h1').textContent='YOU WIN';
+          ov.querySelector('.sub').textContent='TERRA FORGE COMPLETE';
+          ov.querySelector('.info').innerHTML=`All 10 levels cleared · Kills: ${kills}`;
+          ov.querySelector('.btn').textContent='PLAY AGAIN';
+          ov.style.display='flex';
+        },2800);
+      }
+    },1000);
+  }
+}
+
+// ── Particles ──────────────────────────────────────────────
+function updateParticles(){
+  for(let i=particles.length-1;i>=0;i--){
+    const p=particles[i];
+    p.x+=p.vx*.07; p.y+=p.vy*.07; p.z+=p.vz*.07;
+    p.vy+=.04; p.life--;
+    if(p.life<=0) particles.splice(i,1);
+  }
+}
+
+// ── Projection ─────────────────────────────────────────────
+function project(wx,wy,wz){
+  const dx=wx-cam.x,dy=wy-cam.y,dz=wz-cam.z;
+  const sY=Math.sin(-cam.yaw),cY=Math.cos(-cam.yaw);
+  const rx= dx*cY-dz*sY;
+  const rz0= dx*sY+dz*cY;
+  const sP=Math.sin(-cam.pitch),cP=Math.cos(-cam.pitch);
+  const ry= dy*cP-rz0*sP;
+  const rz= dy*sP+rz0*cP;
+  if(rz<=0.2) return null;
+  const sc=FOV/rz;
+  return { sx:W()/2+rx*sc, sy:H()/2+ry*sc, depth:rz, scale:sc };
+}
+
+// ── Render ─────────────────────────────────────────────────
+function render(){
+  const L=LEVELS[currentLevel];
+  ctx.fillStyle=L.fogColor||'#060612';
+  ctx.fillRect(0,0,W(),H());
+
+  const list=[];
+
+  // Voxels
+  voxels.forEach((color,key)=>{
+    const [x,y,z]=key.split(',').map(Number);
+    const p=project(x,y,z);
+    if(!p||p.depth>95) return;
+    list.push({ depth:p.depth, t:'v', color, sx:p.sx, sy:p.sy, s:Math.max(1,p.scale) });
+  });
+
+  // Enemies
+  enemies.forEach(e=>{
+    if(e.hp<=0) return;
+    const p=project(e.x,e.y,e.z);
+    if(!p||p.depth>90) return;
+    const s=Math.max(4,p.scale*0.7);
+    const col = e.hitTimer>0 ? '#ffffff' : (e.type==='drone' ? '#ff4466' : '#ff2200');
+    list.push({ depth:p.depth, t:'e', color:col, sx:p.sx, sy:p.sy, s, hp:e.hp, maxHp:e.maxHp, type:e.type });
+  });
+
+  // Particles
+  particles.forEach(pt=>{
+    const p=project(pt.x,pt.y,pt.z);
+    if(!p) return;
+    list.push({ depth:p.depth, t:'p', color:pt.color, sx:p.sx, sy:p.sy, s:Math.max(1,p.scale*pt.r), a:pt.life/30 });
+  });
+
+  // Bullets
+  bullets.forEach(b=>{
+    const p=project(b.x,b.y,b.z);
+    if(!p) return;
+    list.push({ depth:p.depth, t:'b', color:b.type.light, sx:p.sx, sy:p.sy, s:Math.max(2,p.scale*0.2*b.type.scale) });
+  });
+
+  list.sort((a,b)=>b.depth-a.depth);
+
+  for(const item of list){
+    const fade=Math.max(0,1-item.depth/90);
+    if(item.t==='v'){
+      ctx.globalAlpha=fade;
+      ctx.fillStyle=item.color;
+      ctx.fillRect(item.sx-item.s/2,item.sy-item.s/2,item.s,item.s);
+      ctx.fillStyle='rgba(255,255,255,0.1)';
+      ctx.fillRect(item.sx-item.s/2,item.sy-item.s/2,item.s,item.s*.22);
+    } else if(item.t==='e'){
+      ctx.globalAlpha=Math.min(1,fade+0.3);
+      const s=item.s;
+      // Body
+      ctx.fillStyle=item.color;
+      ctx.shadowColor=item.color; ctx.shadowBlur=12;
+      if(item.type==='drone'){
+        // Diamond shape
+        ctx.beginPath();
+        ctx.moveTo(item.sx,       item.sy-s);
+        ctx.lineTo(item.sx+s*.7,  item.sy);
+        ctx.lineTo(item.sx,       item.sy+s*.6);
+        ctx.lineTo(item.sx-s*.7,  item.sy);
+        ctx.closePath(); ctx.fill();
+        // Eye
+        ctx.fillStyle='#fff'; ctx.shadowBlur=0;
+        ctx.beginPath(); ctx.arc(item.sx,item.sy-s*.15,s*.22,0,Math.PI*2); ctx.fill();
+        ctx.fillStyle='#ff0044';
+        ctx.beginPath(); ctx.arc(item.sx,item.sy-s*.15,s*.1,0,Math.PI*2); ctx.fill();
+      } else {
+        // Crawler — jagged square
+        ctx.fillRect(item.sx-s*.6,item.sy-s*.5,s*1.2,s);
+        ctx.fillStyle='#ff8888'; ctx.shadowBlur=0;
+        ctx.fillRect(item.sx-s*.3,item.sy-s*.5,s*.25,s*.3);
+        ctx.fillRect(item.sx+s*.05,item.sy-s*.5,s*.25,s*.3);
+      }
+      ctx.shadowBlur=0;
+      // HP bar
+      if(item.maxHp>1){
+        const bw=s*2.2;
+        ctx.globalAlpha=0.7;
+        ctx.fillStyle='#333';
+        ctx.fillRect(item.sx-bw/2,item.sy-s-8,bw,4);
+        ctx.fillStyle=item.hp===item.maxHp?'#44ff66':'#ff4422';
+        ctx.fillRect(item.sx-bw/2,item.sy-s-8,bw*(item.hp/item.maxHp),4);
+      }
+    } else if(item.t==='p'){
+      ctx.globalAlpha=(item.a||1)*.75;
+      ctx.fillStyle=item.color;
+      ctx.beginPath(); ctx.arc(item.sx,item.sy,item.s,0,Math.PI*2); ctx.fill();
+    } else if(item.t==='b'){
+      ctx.globalAlpha=1;
+      ctx.shadowColor=item.color; ctx.shadowBlur=10;
+      ctx.fillStyle=item.color;
+      ctx.beginPath(); ctx.arc(item.sx,item.sy,item.s,0,Math.PI*2); ctx.fill();
+      ctx.shadowBlur=0;
+    }
+  }
+  ctx.globalAlpha=1;
+
+  // Progress bar
+  const pct=Math.min(1,levelVoxels/LEVELS[currentLevel].target);
+  ctx.fillStyle='rgba(0,0,0,0.55)';
+  ctx.fillRect(W()/2-110,H()-18,220,7);
+  ctx.fillStyle=`hsl(${110*pct},75%,52%)`;
+  ctx.fillRect(W()/2-110,H()-18,220*pct,7);
+  ctx.strokeStyle='rgba(255,255,255,0.18)'; ctx.lineWidth=1;
+  ctx.strokeRect(W()/2-110,H()-18,220,7);
+  ctx.fillStyle='rgba(255,255,255,0.45)'; ctx.font='9px Courier New';
+  ctx.textAlign='center';
+  ctx.fillText('BUILD TARGET',W()/2,H()-22);
+}
+
+// ── Loop ───────────────────────────────────────────────────
+function loop(){
+  if(gameStarted){
+    updateCam();
+    updateBullets();
+    updateEnemies();
+    updateParticles();
+  }
+  render();
+  requestAnimationFrame(loop);
+}
+loop();
+
+// ── Start ──────────────────────────────────────────────────
+document.getElementById('start-btn').onclick=()=>{
+  lives=3; kills=0; totalVoxels=0; currentLevel=0;
+  document.getElementById('overlay').style.display='none';
+  gameStarted=true;
+  buildLevel(0);
+  canvas.requestPointerLock();
+};
+</script>
+</body>
+</html>
